@@ -7,6 +7,8 @@ from langgraph.types import Send
 from langgraph.graph import StateGraph
 from langgraph.graph import START, END
 from langchain_core.runnables import RunnableConfig
+
+#原生的googlesdk，支持直接调用"tools"例如google搜索。
 from google.genai import Client
 
 from agent.state import (
@@ -41,6 +43,15 @@ genai_client = Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
 # Nodes
+#根据用户的问题生成若干条优化后的搜索查询
+#核心逻辑：
+'''
+   .初始化Gemini flash模型；
+   ·使用query_writer_instructions 模板生成prompt；
+   ·调用structured_llm.invoke(),产出结构化输出 SearchQueryList；
+   ·返回：
+      {"search_query":["tuberculosis treatment pipeline 2025","new TB drugs"]}
+'''
 def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerationState:
     """LangGraph node that generates search queries based on the User's question.
 
@@ -67,10 +78,16 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
         max_retries=2,
         api_key=os.getenv("GEMINI_API_KEY"),
     )
+    #结构化输出：
+    '''
+    {"search_query":["tuberculosis treatment pipeline 2025","new TB drugs"]}
+    '''
     structured_llm = llm.with_structured_output(SearchQueryList)
 
     # Format the prompt
     current_date = get_current_date()
+    
+    #
     formatted_prompt = query_writer_instructions.format(
         current_date=current_date,
         research_topic=get_research_topic(state["messages"]),
@@ -81,17 +98,20 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
     return {"search_query": result.query}
 
 
+#将上一步生成的多条搜索查询，分发成多个"web research"任务
 def continue_to_web_research(state: QueryGenerationState):
     """LangGraph node that sends the search queries to the web research node.
 
     This is used to spawn n number of web research nodes, one for each search query.
     """
+    '''LangGraph特性：返回一个send()列表，意味这可以并行运行多个子节点。'''
     return [
         Send("web_research", {"search_query": search_query, "id": int(idx)})
         for idx, search_query in enumerate(state["search_query"])
     ]
 
-
+#调用Google GenAI 原生接口 进行真实网络搜索
+#
 def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     """LangGraph node that performs web research using the native Google Search API tool.
 
@@ -116,7 +136,7 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
         model=configurable.query_generator_model,
         contents=formatted_prompt,
         config={
-            "tools": [{"google_search": {}}],
+            "tools": [{"google_search": {}}],   ##原生的googlesdk，支持直接调用"tools"例如google搜索。
             "temperature": 0,
         },
     )
@@ -130,12 +150,23 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     sources_gathered = [item for citation in citations for item in citation["segments"]]
 
     return {
-        "sources_gathered": sources_gathered,
+        "sources_gathered": sources_gathered,  
         "search_query": [state["search_query"]],
         "web_research_result": [modified_text],
     }
 
-
+#反思当前研究的内容是否充分，并生成下一轮查询。
+'''
+   增加research_loop_count;
+   将所有web_research_result 拼接成总结
+   使用reflection_instructions prompt；
+   使用输出结构化JSON；
+   {
+      "is_sufficient":False,
+      "knowledge_gap":"No data on pediatric TB therapies",
+      "follow_up_queries": ["pediatric TB treatment 2025", "TB vaccine trials"]
+   }
+'''
 def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
     """LangGraph node that identifies knowledge gaps and generates potential follow-up queries.
 
@@ -179,7 +210,9 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         "number_of_ran_queries": len(state["search_query"]),
     }
 
-
+#根据反思结果判断要不要继续研究：
+#若 is_sufficient=True 或 已达到 max_research_loops → 进入 finalize_answer
+#否则->根据 follow_up_queries 生成新的 send("web_research")
 def evaluate_research(
     state: ReflectionState,
     config: RunnableConfig,
@@ -216,7 +249,9 @@ def evaluate_research(
             for idx, follow_up_query in enumerate(state["follow_up_queries"])
         ]
 
-
+'''
+合并所有研究结果，生成带引用的最终总结报告。
+'''
 def finalize_answer(state: OverallState, config: RunnableConfig):
     """LangGraph node that finalizes the research summary.
 
