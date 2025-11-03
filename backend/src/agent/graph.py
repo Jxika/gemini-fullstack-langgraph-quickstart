@@ -42,7 +42,7 @@ if os.getenv("GEMINI_API_KEY") is None:
 genai_client = Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
-# Nodes
+
 #根据用户的问题生成若干条优化后的搜索查询
 #核心逻辑：
 '''
@@ -97,7 +97,6 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
     result = structured_llm.invoke(formatted_prompt)
     return {"search_query": result.query}
 
-
 #将上一步生成的多条搜索查询，分发成多个"web research"任务
 def continue_to_web_research(state: QueryGenerationState):
     """LangGraph node that sends the search queries to the web research node.
@@ -111,7 +110,6 @@ def continue_to_web_research(state: QueryGenerationState):
     ]
 
 #调用Google GenAI 原生接口 进行真实网络搜索
-#
 def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     """LangGraph node that performs web research using the native Google Search API tool.
 
@@ -325,4 +323,7 @@ builder.add_conditional_edges(
 # Finalize the answer
 builder.add_edge("finalize_answer", END)
 
-graph = builder.compile(name="pro-search-agent")
+graph = builder.compile(name="pro-search-agent") #给生成的图实例一个标识名称
+
+#内部注册机制（用于Agent管理或多模态调度）
+#manager.register(graph) 这样orchestrator 就能通过 "pro-search-agent"来调用它。

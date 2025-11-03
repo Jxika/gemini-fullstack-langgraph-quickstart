@@ -2,6 +2,12 @@ from typing import Any, Dict, List
 from langchain_core.messages import AnyMessage, AIMessage, HumanMessage
 
 
+"""
+   从对话消息中提取研究的问题
+   从消息列表中提取研究主题。
+   输入一般是聊天记录（LangChain格式：HumanMessage、AIMessage）
+   如果是多轮对话，就是把每条消息前加上"User:"或"Assistant："，拼接成完整上下文。
+"""
 def get_research_topic(messages: List[AnyMessage]) -> str:
     """
     Get the research topic from the messages.
@@ -18,7 +24,10 @@ def get_research_topic(messages: List[AnyMessage]) -> str:
                 research_topic += f"Assistant: {message.content}\n"
     return research_topic
 
-
+'''
+   把模型返回的冗长URL生成短链接ID，用于可视化或Markdown引用
+   将搜索结果或引用中冗长的URL转为短链接
+'''
 def resolve_urls(urls_to_resolve: List[Any], id: int) -> Dict[str, str]:
     """
     Create a map of the vertex ai search urls (very long) to a short url with a unique id for each url.
@@ -35,7 +44,11 @@ def resolve_urls(urls_to_resolve: List[Any], id: int) -> Dict[str, str]:
 
     return resolved_map
 
-
+'''
+   在文本中插入Markdown引用的链接
+   在回答文本中插入Markdown引用标记（如[source](short_url)）。
+     ·先按end_index 从后往前插入，避免影响尚未插入部分的索引。
+'''
 def insert_citation_markers(text, citations_list):
     """
     Inserts citation markers into a text string based on start and end indices.
@@ -74,7 +87,27 @@ def insert_citation_markers(text, citations_list):
 
     return modified_text
 
-
+'''
+    从模型响应的“grounding_metadata”(即引用元数据)
+    作用：从Gemini或 Vertex AI Search 的响应中提取引用元数据。
+    这些引用信息通常在模型输出的 grounding_metadata中。
+    👇主要逻辑：
+      1.从response.candidates[0].grounding_metadata.grounding_supports 中获取每个引用块。
+      2.提取：
+          ·start_index：引用段在原文中的起始位置
+          ·end_index：引用结束位置
+          ·grounding_chunk_indices：指向模型检索到的网页片段
+      3.查找每个网页片段的真实 URL，并用 resolved_urls_map 映射成短链接。
+      4.构建一个 citation 字典：
+         {
+            "start_index": 120,
+            "end_index": 180,
+            "segments": [
+               {"label": "BBC News", "short_url": "https://vertexaisearch.cloud.google.com/id/5-3"}
+            ]
+        }
+      5.返回一个 citation 列表，用于传给 insert_citation_markers()。
+'''
 def get_citations(response, resolved_urls_map):
     """
     Extracts and formats citation information from a Gemini model's response.
