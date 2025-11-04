@@ -18,6 +18,8 @@ from agent.state import (
     WebSearchState,
 )
 from agent.configuration import Configuration
+
+from agent.logger import get_logger
 from agent.prompts import (
     get_current_date,
     query_writer_instructions,
@@ -26,7 +28,6 @@ from agent.prompts import (
     answer_instructions,
 )
 
-from agent.logger import get_logger
 
 from langchain_google_genai import ChatGoogleGenerativeAI
 from agent.utils import (
@@ -83,6 +84,8 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
         max_retries=2,
         api_key=os.getenv("GEMINI_API_KEY"),
     )
+    logger.info(f"graph.py|generate_query1|{configurable.query_generator_model},{os.getenv("GEMINI_API_KEY")}" )
+
     #结构化输出：
     '''
     {"search_query":["tuberculosis treatment pipeline 2025","new TB drugs"]}
@@ -97,11 +100,11 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
         research_topic=get_research_topic(state["messages"]),
         number_queries=state["initial_search_query_count"],
     )
-    logger.info(f"graph.py|generate_query|{formatted_prompt}" )
+    logger.info(f"graph.py|generate_query2|{formatted_prompt}" )
 
     # Generate the search queries
     result = structured_llm.invoke(formatted_prompt)
-    logger.info(f"graph.py|generate_query|{result.query}")
+    logger.info(f"graph.py|generate_query3|{result.query}")
     return {"search_query": result.query}
 
 #将上一步生成的多条搜索查询，分发成多个"web research"任务

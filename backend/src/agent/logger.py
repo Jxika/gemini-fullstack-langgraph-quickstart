@@ -6,7 +6,7 @@ from datetime import datetime
 LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-def get_logger(name: str = "backend") -> logging.Logger:
+def get_logger(name: str = "agent") -> logging.Logger:
     """
     获取一个按天生成日志文件的 logger。
     每天生成一个新的日志文件，例如 logs/2025-11-03.log。
