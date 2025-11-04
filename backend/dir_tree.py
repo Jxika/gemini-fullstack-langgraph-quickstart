@@ -1,12 +1,4 @@
 import os
-from logger import get_logger
-logger=get_logger(__name__)
-
-logger.info("Program started")
-logger.warning("Low memory warning")
-logger.error("Request failed")
-logger.critical("critical")
-
 
 def print_dir_tree(startpath, indent=''):
     for root, dirs, files in os.walk(startpath):

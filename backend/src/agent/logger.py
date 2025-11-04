@@ -2,9 +2,8 @@ import logging
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 from datetime import datetime
-from pathlib import Path
 # 日志目录
-LOG_DIR = Path.cwd() / "logs"
+LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 def get_logger(name: str = "backend") -> logging.Logger:

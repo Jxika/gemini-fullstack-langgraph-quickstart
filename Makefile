@@ -1,3 +1,5 @@
+#意思这些是伪目标
+#不是实际文件名，而是命令名
 .PHONY: help dev-frontend dev-backend dev
 
 help:

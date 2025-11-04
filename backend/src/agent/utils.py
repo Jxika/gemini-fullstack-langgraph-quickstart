@@ -1,6 +1,7 @@
 from typing import Any, Dict, List
 from langchain_core.messages import AnyMessage, AIMessage, HumanMessage
-
+from agent.logger import get_logger
+logger=get_logger(__name__)
 
 """
    从对话消息中提取研究的问题
@@ -13,8 +14,9 @@ def get_research_topic(messages: List[AnyMessage]) -> str:
     Get the research topic from the messages.
     """
     # check if request has a history and combine the messages into a single string
-    if len(messages) == 1:
+    if len(messages) == 1: 
         research_topic = messages[-1].content
+        logger.info(f"utils.py|get_research_topic|len(messages)=1,research_topic={research_topic}")
     else:
         research_topic = ""
         for message in messages:
@@ -22,6 +24,8 @@ def get_research_topic(messages: List[AnyMessage]) -> str:
                 research_topic += f"User: {message.content}\n"
             elif isinstance(message, AIMessage):
                 research_topic += f"Assistant: {message.content}\n"
+        logger.info(f"utils.py|get_research_topic|len(messages)>1,research_topic={research_topic}")
+    
     return research_topic
 
 '''

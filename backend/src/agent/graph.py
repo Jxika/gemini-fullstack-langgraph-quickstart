@@ -25,6 +25,9 @@ from agent.prompts import (
     reflection_instructions,
     answer_instructions,
 )
+
+from agent.logger import get_logger
+
 from langchain_google_genai import ChatGoogleGenerativeAI
 from agent.utils import (
     get_citations,
@@ -32,6 +35,8 @@ from agent.utils import (
     insert_citation_markers,
     resolve_urls,
 )
+
+logger=get_logger(__name__)
 
 load_dotenv()
 
@@ -86,15 +91,17 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
 
     # Format the prompt
     current_date = get_current_date()
-    
-    #
+     
     formatted_prompt = query_writer_instructions.format(
         current_date=current_date,
         research_topic=get_research_topic(state["messages"]),
         number_queries=state["initial_search_query_count"],
     )
+    logger.info(f"graph.py|generate_query|{formatted_prompt}" )
+
     # Generate the search queries
     result = structured_llm.invoke(formatted_prompt)
+    logger.info(f"graph.py|generate_query|{result.query}")
     return {"search_query": result.query}
 
 #将上一步生成的多条搜索查询，分发成多个"web research"任务
@@ -104,10 +111,16 @@ def continue_to_web_research(state: QueryGenerationState):
     This is used to spawn n number of web research nodes, one for each search query.
     """
     '''LangGraph特性：返回一个send()列表，意味这可以并行运行多个子节点。'''
-    return [
-        Send("web_research", {"search_query": search_query, "id": int(idx)})
-        for idx, search_query in enumerate(state["search_query"])
+     
+    for idx, query in enumerate(state["search_query"]):
+        logger.info(f"graph.py|continue_to_web_research|任务 {idx}: search_query='{query}'")
+
+    send_tasks=[
+            Send("web_research", {"search_query": search_query, "id": int(idx)})
+            for idx, search_query in enumerate(state["search_query"])
     ]
+    logger.info(f"graph.py|continue_to_web_research|[continue_to_web_research] 已构建 Send 任务列表，共 {len(send_tasks)} 个。")
+    return send_tasks
 
 #调用Google GenAI 原生接口 进行真实网络搜索
 def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
@@ -191,6 +204,9 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         research_topic=get_research_topic(state["messages"]),
         summaries="\n\n---\n\n".join(state["web_research_result"]),
     )
+
+    logger.info(f"graph.py|reflection|formatted_prompt={formatted_prompt}")
+
     # init Reasoning Model
     llm = ChatGoogleGenerativeAI(
         model=reasoning_model,
@@ -199,7 +215,12 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         api_key=os.getenv("GEMINI_API_KEY"),
     )
     result = llm.with_structured_output(Reflection).invoke(formatted_prompt)
-
+    logger.info(f"""graph.py|reflection|is_sufficient={result.is_sufficient},
+                knowledge_gap={result.knowledge_gap},
+                follow_up_queries={result.follow_up_queries},
+                research_loop_count={state["research_loop_count"]},
+                number_of_ran_queries={len(state["search_query"])}
+                """)
     return {
         "is_sufficient": result.is_sufficient,
         "knowledge_gap": result.knowledge_gap,
@@ -233,9 +254,17 @@ def evaluate_research(
         if state.get("max_research_loops") is not None
         else configurable.max_research_loops
     )
+
+    logger.info(f"graph.py|evaluate_research|is_sufficient={state["is_sufficient"]},research_loop_count={state["research_loop_count"]}")
     if state["is_sufficient"] or state["research_loop_count"] >= max_research_loops:
+        logger.info(f"graph.py|evaluate_research|finalize_answer")      
         return "finalize_answer"
     else:
+        logger.info(f"graph.py|evaluate_research|发现{len(state["follow_up_queries"])}个新的follow-up查询。")
+        logger.info(f"graph.py|evaluate_research|当前累计已运行查询数：{state["number_of_ran_queries"]}")
+        for idx,q in enumerate(state["follow_up_queries"]):
+            logger.info(f"Follow-up #{idx}:'{q}'(id={state["number_of_ran_queries"]+idx})")
+
         return [
             Send(
                 "web_research",
@@ -273,7 +302,9 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
         research_topic=get_research_topic(state["messages"]),
         summaries="\n---\n\n".join(state["web_research_result"]),
     )
-
+    
+    logger.info(f"graph.py|finalize_answer|formatted_prompt={formatted_prompt}")
+    
     # init Reasoning Model, default to Gemini 2.5 Flash
     llm = ChatGoogleGenerativeAI(
         model=reasoning_model,
@@ -292,6 +323,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
             )
             unique_sources.append(source)
 
+    logger.info(f"graph.py|finalize_answer|messages={result.content},sources_gathered={unique_sources}")
     return {
         "messages": [AIMessage(content=result.content)],
         "sources_gathered": unique_sources,
@@ -318,6 +350,7 @@ builder.add_conditional_edges(
 builder.add_edge("web_research", "reflection")
 # Evaluate the research
 builder.add_conditional_edges(
+    #可供跳转的目标节点名称列表
     "reflection", evaluate_research, ["web_research", "finalize_answer"]
 )
 # Finalize the answer
