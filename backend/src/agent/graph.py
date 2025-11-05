@@ -50,92 +50,52 @@ if os.getenv("GEMINI_API_KEY") is None:
 genai_client = Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 
-
-#根据用户的问题生成若干条优化后的搜索查询
-#核心逻辑：
-'''
-   .初始化Gemini flash模型；
-   ·使用query_writer_instructions 模板生成prompt；
-   ·调用structured_llm.invoke(),产出结构化输出 SearchQueryList；
-   ·返回：
-      {"search_query":["tuberculosis treatment pipeline 2025","new TB drugs"]}
-'''
 def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerationState:
-    """LangGraph node that generates search queries based on the User's question.
+    """
+       LangGraph node 基于用户问题生成查询需求。
 
-    Uses Gemini 2.0 Flash to create an optimized search queries for web research based on
-    the User's question.
-
-    Args:
-        state: Current graph state containing the User's question
-        config: Configuration for the runnable, including LLM provider settings
-
-    Returns:
-        Dictionary with state update, including search_query key containing the generated queries
+       Args:
+          state:当前的图状态了用户问题
+          config:一些配置
+       
+       Returns:
+          更新state字典，包括生成的问题。
     """
     configurable = Configuration.from_runnable_config(config)
-
-    # check for custom initial search query count
     if state.get("initial_search_query_count") is None:
         state["initial_search_query_count"] = configurable.number_of_initial_queries
 
-    # init Gemini 2.0 Flash
-    # llm = ChatGoogleGenerativeAI(
-    #     model=configurable.query_generator_model,
-    #     temperature=1.0,
-    #     max_retries=2,
-    #     api_key=os.getenv("GEMINI_API_KEY"),
-    # )
-    #结构化输出：
-    '''
-    {"search_query":["tuberculosis treatment pipeline 2025","new TB drugs"]}
-    '''
-    #structured_llm = llm.with_structured_output(SearchQueryList)
-
-    # Format the prompt
-    current_date = get_current_date()
-     
     formatted_prompt = query_writer_instructions.format(
-        current_date=current_date,
+        current_date=get_current_date(),
         research_topic=get_research_topic(state["messages"]),
         number_queries=state["initial_search_query_count"],
     )
-    logger.info(f"-1 graph.py|generate_query|{formatted_prompt}" )
-    genaic = Client(api_key=os.getenv("GEMINI_API_KEY"))
-    resp=genaic.models.generate_content(
+    logger.info(f"🧠generate_query|research_topic={get_research_topic(state["messages"])} , \n  number_queries={state["initial_search_query_count"]}" )
+    resp=genai_client.models.generate_content(
         model=configurable.query_generator_model,
         contents=formatted_prompt,
         config={"temperature": 1.0}
     )
-
-    logger.info(f"1.5 graph.py|generate_query|resp={resp}")
     text_output=resp.candidates[0].content.parts[0].text
-
     clean_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_output, flags=re.DOTALL)
     query_json=json.loads(clean_text)
 
     # Generate the search queries
     #result = structured_llm.invoke(formatted_prompt)
-
-    logger.info(f"2 graph.py|generate_query|{query_json['query']}")
+    logger.info(f"🧠generate_query|search_query={query_json['query']}")
     return {"search_query": query_json["query"]}
 
-#将上一步生成的多条搜索查询，分发成多个"web research"任务
 def continue_to_web_research(state: QueryGenerationState):
-    """LangGraph node that sends the search queries to the web research node.
-
-    This is used to spawn n number of web research nodes, one for each search query.
-    """
-    '''LangGraph特性：返回一个send()列表，意味这可以并行运行多个子节点。'''
-     
+    """LangGraph node that sends the search queries to the web research node."""
+    '''LangGraph特性：返回一个send()列表，意味这可以并行运行多个子节点。''' 
     for idx, query in enumerate(state["search_query"]):
-        logger.info(f"graph.py|continue_to_web_research|任务 {idx}: search_query='{query}'")
+        logger.info(f"🔧continue_to_web_research|📄任务 {idx}: search_query='{query}'")
 
     send_tasks=[
             Send("web_research", {"search_query": search_query, "id": int(idx)})
             for idx, search_query in enumerate(state["search_query"])
     ]
-    logger.info(f"graph.py|continue_to_web_research|[continue_to_web_research] 已构建 Send 任务列表，共 {len(send_tasks)} 个。")
+    logger.info(f"🔧continue_to_web_research|构建任务数量，共 {len(send_tasks)} 个。")
     return send_tasks
 
 #调用Google GenAI 原生接口 进行真实网络搜索

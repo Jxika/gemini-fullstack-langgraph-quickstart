@@ -24,7 +24,6 @@ def get_current_date():
 ·"query":一个包含搜索查询字符串的列表
 
 '''
-
 query_writer_instructions = """Your goal is to generate sophisticated and diverse web search queries. These queries are intended for an advanced automated web research tool capable of analyzing complex results, following links, and synthesizing information.
 
 Instructions:
