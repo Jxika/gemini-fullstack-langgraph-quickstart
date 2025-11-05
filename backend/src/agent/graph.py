@@ -7,7 +7,9 @@ from langgraph.types import Send
 from langgraph.graph import StateGraph
 from langgraph.graph import START, END
 from langchain_core.runnables import RunnableConfig
-
+from google import genai
+import re
+import json
 #原生的googlesdk，支持直接调用"tools"例如google搜索。
 from google.genai import Client
 
@@ -78,19 +80,17 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
         state["initial_search_query_count"] = configurable.number_of_initial_queries
 
     # init Gemini 2.0 Flash
-    llm = ChatGoogleGenerativeAI(
-        model=configurable.query_generator_model,
-        temperature=1.0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
-    )
-    logger.info(f"graph.py|generate_query1|{configurable.query_generator_model},{os.getenv("GEMINI_API_KEY")}" )
-
+    # llm = ChatGoogleGenerativeAI(
+    #     model=configurable.query_generator_model,
+    #     temperature=1.0,
+    #     max_retries=2,
+    #     api_key=os.getenv("GEMINI_API_KEY"),
+    # )
     #结构化输出：
     '''
     {"search_query":["tuberculosis treatment pipeline 2025","new TB drugs"]}
     '''
-    structured_llm = llm.with_structured_output(SearchQueryList)
+    #structured_llm = llm.with_structured_output(SearchQueryList)
 
     # Format the prompt
     current_date = get_current_date()
@@ -100,12 +100,25 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
         research_topic=get_research_topic(state["messages"]),
         number_queries=state["initial_search_query_count"],
     )
-    logger.info(f"graph.py|generate_query2|{formatted_prompt}" )
+    logger.info(f"-1 graph.py|generate_query|{formatted_prompt}" )
+    genaic = Client(api_key=os.getenv("GEMINI_API_KEY"))
+    resp=genaic.models.generate_content(
+        model=configurable.query_generator_model,
+        contents=formatted_prompt,
+        config={"temperature": 1.0}
+    )
+
+    logger.info(f"1.5 graph.py|generate_query|resp={resp}")
+    text_output=resp.candidates[0].content.parts[0].text
+
+    clean_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_output, flags=re.DOTALL)
+    query_json=json.loads(clean_text)
 
     # Generate the search queries
-    result = structured_llm.invoke(formatted_prompt)
-    logger.info(f"graph.py|generate_query3|{result.query}")
-    return {"search_query": result.query}
+    #result = structured_llm.invoke(formatted_prompt)
+
+    logger.info(f"2 graph.py|generate_query|{query_json['query']}")
+    return {"search_query": query_json["query"]}
 
 #将上一步生成的多条搜索查询，分发成多个"web research"任务
 def continue_to_web_research(state: QueryGenerationState):
@@ -211,23 +224,37 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
     logger.info(f"graph.py|reflection|formatted_prompt={formatted_prompt}")
 
     # init Reasoning Model
-    llm = ChatGoogleGenerativeAI(
+    # llm = ChatGoogleGenerativeAI(
+    #     model=reasoning_model,
+    #     temperature=1.0,
+    #     max_retries=2,
+    #     api_key=os.getenv("GEMINI_API_KEY"),
+    # )
+    #result = llm.with_structured_output(Reflection).invoke(formatted_prompt)
+ 
+    response=genai_client.models.generate_content(
         model=reasoning_model,
-        temperature=1.0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
+        contents=formatted_prompt,
+        config={"temperature": 1.0},
     )
-    result = llm.with_structured_output(Reflection).invoke(formatted_prompt)
-    logger.info(f"""graph.py|reflection|is_sufficient={result.is_sufficient},
-                knowledge_gap={result.knowledge_gap},
-                follow_up_queries={result.follow_up_queries},
+    text_output=response.candidates[0].content.parts[0].text
+
+    clean_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_output, flags=re.DOTALL)
+
+    result = json.loads(clean_text)
+    
+
+
+    logger.info(f"""graph.py|reflection|is_sufficient={result["is_sufficient"]},
+                knowledge_gap={result["knowledge_gap"]},
+                follow_up_queries={result["follow_up_queries"]},
                 research_loop_count={state["research_loop_count"]},
                 number_of_ran_queries={len(state["search_query"])}
                 """)
     return {
-        "is_sufficient": result.is_sufficient,
-        "knowledge_gap": result.knowledge_gap,
-        "follow_up_queries": result.follow_up_queries,
+        "is_sufficient": result["is_sufficient"],
+        "knowledge_gap": result["knowledge_gap"],
+        "follow_up_queries": result["follow_up_queries"],
         "research_loop_count": state["research_loop_count"],
         "number_of_ran_queries": len(state["search_query"]),
     }
@@ -308,27 +335,32 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     
     logger.info(f"graph.py|finalize_answer|formatted_prompt={formatted_prompt}")
     
-    # init Reasoning Model, default to Gemini 2.5 Flash
-    llm = ChatGoogleGenerativeAI(
+    response = genai_client.models.generate_content(
         model=reasoning_model,
-        temperature=0,
-        max_retries=2,
-        api_key=os.getenv("GEMINI_API_KEY"),
+        contents=formatted_prompt,
+        config={"temperature": 0},
     )
-    result = llm.invoke(formatted_prompt)
+    raw_text = response.candidates[0].content.parts[0].text
+    clean_text=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL)
+    # init Reasoning Model, default to Gemini 2.5 Flash
+    # llm = ChatGoogleGenerativeAI(
+    #     model=reasoning_model,
+    #     temperature=0,
+    #     max_retries=2,
+    #     api_key=os.getenv("GEMINI_API_KEY"),
+    # )
+    # result = llm.invoke(formatted_prompt)
 
     # Replace the short urls with the original urls and add all used urls to the sources_gathered
     unique_sources = []
     for source in state["sources_gathered"]:
-        if source["short_url"] in result.content:
-            result.content = result.content.replace(
-                source["short_url"], source["value"]
-            )
+        if source["short_url"] in clean_text:
+            clean_text = clean_text.replace(source["short_url"], source["value"])
             unique_sources.append(source)
 
-    logger.info(f"graph.py|finalize_answer|messages={result.content},sources_gathered={unique_sources}")
+    logger.info(f"graph.py|finalize_answer|messages={clean_text},sources_gathered={unique_sources}")
     return {
-        "messages": [AIMessage(content=result.content)],
+        "messages": [AIMessage(content=clean_text)],
         "sources_gathered": unique_sources,
     }
 
