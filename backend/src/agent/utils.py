@@ -16,7 +16,7 @@ def get_research_topic(messages: List[AnyMessage]) -> str:
     # check if request has a history and combine the messages into a single string
     if len(messages) == 1: 
         research_topic = messages[-1].content
-        logger.info(f"utils.py|get_research_topic|len(messages)=1,research_topic={research_topic}")
+        logger.info(f"💬len(messages)=1,research_topic={research_topic}")
     else:
         research_topic = ""
         for message in messages:
@@ -24,7 +24,7 @@ def get_research_topic(messages: List[AnyMessage]) -> str:
                 research_topic += f"User: {message.content}\n"
             elif isinstance(message, AIMessage):
                 research_topic += f"Assistant: {message.content}\n"
-        logger.info(f"utils.py|get_research_topic|len(messages)>1,research_topic={research_topic}")
+        logger.info(f"💬research_topic={research_topic}")
     
     return research_topic
 
@@ -45,7 +45,7 @@ def resolve_urls(urls_to_resolve: List[Any], id: int) -> Dict[str, str]:
     for idx, url in enumerate(urls):
         if url not in resolved_map:
             resolved_map[url] = f"{prefix}{id}-{idx}"
-
+            logger.info(f"🌐grounding_metadata.grounding_chunks.url={url[:20]}-{idx}")
     return resolved_map
 
 '''

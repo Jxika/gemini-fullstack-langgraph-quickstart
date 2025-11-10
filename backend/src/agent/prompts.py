@@ -78,11 +78,6 @@ Research Topic:
 """
 
 
-
-
-
-
-
 '''
    你是一个专家研究助理，负责分析有关{research_topic}的摘要。
    指令：

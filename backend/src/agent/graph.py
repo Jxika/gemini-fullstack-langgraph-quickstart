@@ -12,6 +12,7 @@ import re
 import json
 #原生的googlesdk，支持直接调用"tools"例如google搜索。
 from google.genai import Client
+from swagger_tools_config import swagger_tools
 
 from agent.state import (
     OverallState,
@@ -111,7 +112,6 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     Returns:
         Dictionary with state update, including sources_gathered, research_loop_count, and web_research_results
     """
-    # Configure
     configurable = Configuration.from_runnable_config(config)
     formatted_prompt = web_searcher_instructions.format(
         current_date=get_current_date(),
@@ -119,23 +119,44 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     )
 
     # Uses the google genai client as the langchain client doesn't return grounding metadata
+    '''
+       response.candidates[0].grounding_metadata.grounding_chunks 是 Google Generative AI（Gemini）
+       返回结果中的 “grounding 数据” —— 也就是模型在回答时引用的外部来源（如网页搜索结果、文档、或其他上下文）
+       的具体片段（chunks）。
+    '''
     response = genai_client.models.generate_content(
         model=configurable.query_generator_model,
         contents=formatted_prompt,
         config={
-            "tools": [{"google_search": {}}],   ##原生的googlesdk，支持直接调用"tools"例如google搜索。
+            "tools": [
+                {"google_search": {}},
+                {"function_declarations":[
+                    {
+                       "name":"get_clinical_trials",
+                       "desscription":"get clinical trial data from local API",
+                       "parameters":{"type": "object", "properties": {"filters": {"type": "object"}}}
+
+                    },
+
+                  ]
+                }      
+                      ],   ##原生的googlesdk，支持直接调用"tools"例如google搜索。
             "temperature": 0,
         },
     )
-    # resolve the urls to short urls for saving tokens and time
+    
     resolved_urls = resolve_urls(
         response.candidates[0].grounding_metadata.grounding_chunks, state["id"]
     )
+    
     # Gets the citations and adds them to the generated text
     citations = get_citations(response, resolved_urls)
     modified_text = insert_citation_markers(response.text, citations)
     sources_gathered = [item for citation in citations for item in citation["segments"]]
 
+    logger.info(f"🧩sources_gathered={sources_gathered}")
+    logger.info(f"🧩search_query={[state["search_query"]]}")
+    logger.info(f"🧩web_research_result={[modified_text]}")
     return {
         "sources_gathered": sources_gathered,  
         "search_query": [state["search_query"]],
@@ -180,9 +201,8 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         research_topic=get_research_topic(state["messages"]),
         summaries="\n\n---\n\n".join(state["web_research_result"]),
     )
-
-    logger.info(f"graph.py|reflection|formatted_prompt={formatted_prompt}")
-
+    logger.info(f"🤔research_topic={get_research_topic(state["messages"])}")
+    logger.info(f"🤔summaries={"\n\n---\n\n".join(state["web_research_result"])}")
     # init Reasoning Model
     # llm = ChatGoogleGenerativeAI(
     #     model=reasoning_model,
@@ -198,14 +218,9 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         config={"temperature": 1.0},
     )
     text_output=response.candidates[0].content.parts[0].text
-
     clean_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_output, flags=re.DOTALL)
-
     result = json.loads(clean_text)
-    
-
-
-    logger.info(f"""graph.py|reflection|is_sufficient={result["is_sufficient"]},
+    logger.info(f"""🤔is_sufficient={result["is_sufficient"]},
                 knowledge_gap={result["knowledge_gap"]},
                 follow_up_queries={result["follow_up_queries"]},
                 research_loop_count={state["research_loop_count"]},
@@ -222,10 +237,7 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
 #根据反思结果判断要不要继续研究：
 #若 is_sufficient=True 或 已达到 max_research_loops → 进入 finalize_answer
 #否则->根据 follow_up_queries 生成新的 send("web_research")
-def evaluate_research(
-    state: ReflectionState,
-    config: RunnableConfig,
-) -> OverallState:
+def evaluate_research(state: ReflectionState,config: RunnableConfig,) -> OverallState:
     """LangGraph routing function that determines the next step in the research flow.
 
     Controls the research loop by deciding whether to continue gathering information
@@ -245,15 +257,14 @@ def evaluate_research(
         else configurable.max_research_loops
     )
 
-    logger.info(f"graph.py|evaluate_research|is_sufficient={state["is_sufficient"]},research_loop_count={state["research_loop_count"]}")
-    if state["is_sufficient"] or state["research_loop_count"] >= max_research_loops:
-        logger.info(f"graph.py|evaluate_research|finalize_answer")      
+    logger.info(f"🔁research_loop_count={state["research_loop_count"]}")
+    if state["is_sufficient"] or state["research_loop_count"] >= max_research_loops:   
         return "finalize_answer"
     else:
-        logger.info(f"graph.py|evaluate_research|发现{len(state["follow_up_queries"])}个新的follow-up查询。")
-        logger.info(f"graph.py|evaluate_research|当前累计已运行查询数：{state["number_of_ran_queries"]}")
+        logger.info(f"🔁发现{len(state["follow_up_queries"])}个新的follow-up查询。")
+        logger.info(f"🔁当前累计已运行查询数：{state["number_of_ran_queries"]}")
         for idx,q in enumerate(state["follow_up_queries"]):
-            logger.info(f"Follow-up #{idx}:'{q}'(id={state["number_of_ran_queries"]+idx})")
+            logger.info(f"🔁Follow-up #{idx}:'{q}'(id={state["number_of_ran_queries"]+idx})")
 
         return [
             Send(
@@ -293,7 +304,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
         summaries="\n---\n\n".join(state["web_research_result"]),
     )
     
-    logger.info(f"graph.py|finalize_answer|formatted_prompt={formatted_prompt}")
+    logger.info(f"⚡⚡⚡formatted_prompt={formatted_prompt}")
     
     response = genai_client.models.generate_content(
         model=reasoning_model,
@@ -318,7 +329,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
             clean_text = clean_text.replace(source["short_url"], source["value"])
             unique_sources.append(source)
 
-    logger.info(f"graph.py|finalize_answer|messages={clean_text},sources_gathered={unique_sources}")
+    logger.info("🚀==============================END=================================🚀")
     return {
         "messages": [AIMessage(content=clean_text)],
         "sources_gathered": unique_sources,
@@ -328,7 +339,6 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
 # Create our Agent Graph
 builder = StateGraph(OverallState, config_schema=Configuration)
 
-# Define the nodes we will cycle between
 builder.add_node("generate_query", generate_query)
 builder.add_node("web_research", web_research)
 builder.add_node("reflection", reflection)
