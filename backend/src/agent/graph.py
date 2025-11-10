@@ -13,7 +13,7 @@ import json
 #原生的googlesdk，支持直接调用"tools"例如google搜索。
 from google.genai import Client
 from swagger_tools_config import swagger_tools
-
+from swagger_client import call_swagegr_api
 from agent.state import (
     OverallState,
     QueryGenerationState,
@@ -130,21 +130,16 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
         config={
             "tools": [
                 {"google_search": {}},
-                {"function_declarations":[
-                    {
-                       "name":"get_clinical_trials",
-                       "desscription":"get clinical trial data from local API",
-                       "parameters":{"type": "object", "properties": {"filters": {"type": "object"}}}
-
-                    },
-
-                  ]
-                }      
-                      ],   ##原生的googlesdk，支持直接调用"tools"例如google搜索。
+                *swagger_tools,     
+            ],   ##原生的googlesdk，支持直接调用"tools"例如google搜索。
             "temperature": 0,
         },
     )
     
+    if hasattr(response,"tool_invocations"):
+        for call in response.tool_invocations:
+            
+
     resolved_urls = resolve_urls(
         response.candidates[0].grounding_metadata.grounding_chunks, state["id"]
     )
