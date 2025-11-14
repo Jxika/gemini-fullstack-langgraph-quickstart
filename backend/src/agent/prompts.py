@@ -77,6 +77,20 @@ Research Topic:
 {research_topic}
 """
 
+web_searcher_instructions_hybrid="""
+Conduct targeted Google searches and, when the topic concerns clinical trials or patient/trial details, call the local tool get_clinical_results. Use {current_date} as the current date.
+
+Instructions:
+- Query should ensure that the most current information is gathered. The current date is {current_date}.
+- Conduct multiple, diverse searches to gather comprehensive information.
+- Consolidate key findings while meticulously tracking the source(s) for each specific piece of information.
+- The output should be a well-written summary or report based on your search findings. 
+- Only include the information found in the search results, don't make up any information.
+
+Research Topic:
+{research_topic}
+"""
+
 
 '''
    你是一个专家研究助理，负责分析有关{research_topic}的摘要。
