@@ -123,7 +123,6 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
         research_topic=get_research_topic(state["messages"]),
         number_queries=state["initial_search_query_count"],
     )
-    logger.info(f"🧠generate_query|research_topic={get_research_topic(state["messages"])} , number_queries={state["initial_search_query_count"]}" )
     resp=genai_client.models.generate_content(
         model=configurable.query_generator_model,
         contents=formatted_prompt,
@@ -223,6 +222,7 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
 
     tools = {"web_search": web_search, "get_clinical_results": get_clinical_results}
 
+    logger.info(f"🧩调用tool前")
     while True:
             response=llm.bind_tools([web_search, get_clinical_results]).invoke(messages)
             response = response.model_dump_json(indent=4, exclude_none=True)
@@ -269,9 +269,6 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
     }
 
 
-
-
-
 #反思当前研究的内容是否充分，并生成下一轮查询。
 '''
    增加research_loop_count;
@@ -299,7 +296,6 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         Dictionary with state update, including search_query key containing the generated follow-up query
     """
     configurable = Configuration.from_runnable_config(config)
-    # Increment the research loop count and get the reasoning model
     state["research_loop_count"] = state.get("research_loop_count", 0) + 1
     reasoning_model = state.get("reasoning_model", configurable.reflection_model)
 
@@ -310,7 +306,6 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         research_topic=get_research_topic(state["messages"]),
         summaries="\n\n---\n\n".join(state["web_research_result"]),
     )
-    logger.info(f"🤔research_topic={get_research_topic(state["messages"])}")
     logger.info(f"🤔summaries={"\n\n---\n\n".join(state["web_research_result"])}")
     # init Reasoning Model
     # llm = ChatGoogleGenerativeAI(
