@@ -74,7 +74,8 @@ def parse_tools(text, start_flag, end_flag):
     return tools
 
 def get_tools(response):
-    print(extract_answer(response['content']))
+    logger.info(f"get_tools|llm返回:{extract_answer(response['content'])}")
+    logger.info(f"----------------------------")
     if response['tool_calls']:
         print("-------------------------")
         tools = response['tool_calls']
@@ -100,7 +101,8 @@ def get_tools(response):
             print("----------<```json>------------")
             tools = parse_tools(content, '```json', '```')      
         else:
-            tools = []     
+            tools = [] 
+    logger.info(f"get_tools|llm返回工具:{tools}")    
     return tools
 
 def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerationState:
@@ -151,7 +153,7 @@ def continue_to_web_research(state: QueryGenerationState):
     return send_tasks
 
 #调用Google GenAI 原生接口 进行真实网络搜索
-def web_research_onlyGoogle(state: WebSearchState, config: RunnableConfig)->OverallState:
+def web_research(state: WebSearchState, config: RunnableConfig)->OverallState:
     """LangGraph node that performs web research using the native Google Search API tool.
 
     Executes a web search using the native Google Search API tool in combination with Gemini 2.0 Flash.
@@ -198,7 +200,7 @@ def web_research_onlyGoogle(state: WebSearchState, config: RunnableConfig)->Over
         }
 
 
-def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
+def web_research2(state: WebSearchState, config: RunnableConfig) -> OverallState:
 
     configurable = Configuration.from_runnable_config(config)
 
@@ -222,7 +224,6 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
 
     tools = {"web_search": web_search, "get_clinical_results": get_clinical_results}
 
-    logger.info(f"🧩调用tool前")
     while True:
             response=llm.bind_tools([web_search, get_clinical_results]).invoke(messages)
             response = response.model_dump_json(indent=4, exclude_none=True)
@@ -246,6 +247,7 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
                     except Exception as e:
                         messages += [HumanMessage(content=f"{tool}工具调用格式错误:{e}")]
                         break
+                    logger.info(f"web_research|调用工具{tool_name},参数{tool_args}")
                     tool_result = tools[tool_name].invoke(tool_args)
                 
                     web_research_result.append(tool_result)
