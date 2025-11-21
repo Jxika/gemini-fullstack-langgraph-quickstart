@@ -10,4 +10,4 @@ def print_dir_tree(startpath, indent=''):
             print(f"{subindent}{f}")
 
 # 使用示例
-print_dir_tree("../backend")  # 当前目录
+print_dir_tree("../backend/src/")  # 当前目录

@@ -8,6 +8,13 @@ from langchain_core.runnables import RunnableConfig
 class Configuration(BaseModel):
     """The configuration for the agent."""
 
+    llm_provider:str=Field(
+        default="gemini", #deepseek
+        metadata={
+            "description": "The LLM provider to use (e.g., 'gemini', 'deepseek'). Environment variable: LLM_PROVIDER"
+        }
+    )
+
     query_generator_model: str = Field(
         default="gemini-2.0-flash",
         metadata={

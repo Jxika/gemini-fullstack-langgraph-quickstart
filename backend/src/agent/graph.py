@@ -7,6 +7,7 @@ from langgraph.types import Send
 from langgraph.graph import StateGraph
 from langgraph.graph import START, END
 from langchain_core.runnables import RunnableConfig
+from langchain_deepseek import ChatDeepSeek
 from google import genai
 import re
 import json
@@ -21,6 +22,7 @@ from agent.state import (
 
 from agent.configuration import Configuration
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.language_models.chat_models import BaseChatModel
 from agent.logger import get_logger
 from agent.prompts import (
     get_current_date,
@@ -51,6 +53,10 @@ if os.getenv("GEMINI_API_KEY") is None:
 genai_client = Client(api_key=os.getenv("GEMINI_API_KEY"))
 gemini_baseurl="https://generativelanguage.googleapis.com/v1beta/openai/"
 
+deepseek_baseurl="https://api.deepseek.com/v1"
+
+
+print(f"时间{get_current_date()}")
 
 def extract_json(text):
     if '```json' not in text:
@@ -75,9 +81,7 @@ def parse_tools(text, start_flag, end_flag):
 
 def get_tools(response):
     logger.info(f"get_tools|llm返回:{extract_answer(response['content'])}")
-    logger.info(f"----------------------------")
     if response['tool_calls']:
-        print("-------------------------")
         tools = response['tool_calls']
     else:
         content = extract_answer(response['content'])
@@ -102,8 +106,39 @@ def get_tools(response):
             tools = parse_tools(content, '```json', '```')      
         else:
             tools = [] 
-    logger.info(f"get_tools|llm返回工具:{tools}")    
+    logger.info(f"get_tools|llm返回工具:{tools}")  
+    logger.info(f"----------------------------")  
     return tools
+
+def get_llm_client(configurable:Configuration,task_model_name:str,temperature:float=0.0,max_retries:int=2)->BaseChatModel:
+    provider=configurable.llm_provider.lower()
+    
+    if provider=="gemini":
+        gemini_api_key=os.getenv("GEMINI_API_KEY")
+        if not gemini_api_key:
+            raise ValueError("GEMINI_API_KEY must be set for Gemini provider, either via LLM_API_KEY or GEMINI_API_KEY environment variable.")
+        return ChatOpenAI(
+            model=task_model_name,
+            temperature=temperature,
+            max_retries=max_retries,
+            api_key=gemini_api_key,
+            base_url=gemini_baseurl
+        )
+    elif provider=="deepseek":
+        deepseek_key=os.getenv("DEEP_SEEK_KEY")
+        print(f"deepseek_key{deepseek_key}")
+        if not deepseek_key:
+            raise ValueError("DEEP_SEEK_KEY must be set for deepseek provider, either via LLM_API_KEY or DEEP_SEEK_KEY environment variable.")
+        return ChatDeepSeek(
+            model=task_model_name,
+            temperature=temperature,
+            max_retries=max_retries,
+            api_key=deepseek_key,
+            base_url="https://api.deepseek.com/v1"
+        )
+    else:
+        raise ValueError(f"Unsupported LLM provider:{configurable.llm_provider}")
+
 
 def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerationState:
     """
@@ -116,6 +151,7 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
        Returns:
           更新state字典，包括生成的问题。
     """
+
     configurable = Configuration.from_runnable_config(config)
     if state.get("initial_search_query_count") is None:
         state["initial_search_query_count"] = configurable.number_of_initial_queries
@@ -125,19 +161,31 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
         research_topic=get_research_topic(state["messages"]),
         number_queries=state["initial_search_query_count"],
     )
-    resp=genai_client.models.generate_content(
-        model=configurable.query_generator_model,
-        contents=formatted_prompt,
-        config={"temperature": 1.0}
-    )
-    text_output=resp.candidates[0].content.parts[0].text
-    clean_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_output, flags=re.DOTALL)
-    query_json=json.loads(clean_text)
+
+    #llm=get_llm_client(configurable,configurable.query_generator_model,1.0,2)
+    llm=ChatDeepSeek(model="deepseek-chat",
+                   temperature=1,
+                   max_retries=2,
+                   api_key=os.getenv("DEEP_SEEK_KEY"),
+                   base_url=deepseek_baseurl
+                   )
+    structured_llm = llm.with_structured_output(SearchQueryList)
+    result=structured_llm.invoke(formatted_prompt)
+    return {"search_query":result.query}
+
+    # resp=genai_client.models.generate_content(
+    #     model=configurable.query_generator_model,
+    #     contents=formatted_prompt,
+    #     config={"temperature": 1.0}
+    # )
+    # text_output=resp.candidates[0].content.parts[0].text
+    # clean_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_output, flags=re.DOTALL)
+    # query_json=json.loads(clean_text)
 
     # Generate the search queries
     #result = structured_llm.invoke(formatted_prompt)
-    logger.info(f"🧠generate_query|search_query={query_json['query']}")
-    return {"search_query": query_json["query"]}
+    #logger.info(f"🧠generate_query|search_query={query_json['query']}")
+    #return {"search_query": query_json["query"]}
 
 def continue_to_web_research(state: QueryGenerationState):
     """LangGraph node that sends the search queries to the web research node."""
@@ -149,11 +197,10 @@ def continue_to_web_research(state: QueryGenerationState):
             Send("web_research", {"search_query": search_query, "id": int(idx)})
             for idx, search_query in enumerate(state["search_query"])
     ]
-    logger.info(f"🔧continue_to_web_research|构建任务数量，共 {len(send_tasks)} 个。")
     return send_tasks
 
 #调用Google GenAI 原生接口 进行真实网络搜索
-def web_research(state: WebSearchState, config: RunnableConfig)->OverallState:
+def web_research_only(state: WebSearchState, config: RunnableConfig)->OverallState:
     """LangGraph node that performs web research using the native Google Search API tool.
 
     Executes a web search using the native Google Search API tool in combination with Gemini 2.0 Flash.
@@ -171,7 +218,7 @@ def web_research(state: WebSearchState, config: RunnableConfig)->OverallState:
         research_topic=state["search_query"],
     )
     response = genai_client.models.generate_content(
-        model=configurable.query_generator_model,
+        model=configurable.reflection_model,
         contents=formatted_prompt,
         config={
             "tools": [
@@ -179,11 +226,10 @@ def web_research(state: WebSearchState, config: RunnableConfig)->OverallState:
             ],  
             "temperature": 0,
         },
-    )
-    
+    ) 
     resolved_urls = resolve_urls(
             response.candidates[0].grounding_metadata.grounding_chunks, state["id"]
-        )
+    )
     
     # Gets the citations and adds them to the generated text
     citations = get_citations(response, resolved_urls)
@@ -200,7 +246,7 @@ def web_research(state: WebSearchState, config: RunnableConfig)->OverallState:
         }
 
 
-def web_research2(state: WebSearchState, config: RunnableConfig) -> OverallState:
+def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
 
     configurable = Configuration.from_runnable_config(config)
 
@@ -213,11 +259,12 @@ def web_research2(state: WebSearchState, config: RunnableConfig) -> OverallState
        返回结果中的 “grounding 数据” —— 也就是模型在回答时引用的外部来源（如网页搜索结果、文档、或其他上下文）
        的具体片段（chunks）。
     '''
-    llm=ChatOpenAI(model=configurable.query_generator_model,
+    #llm=get_llm_client(configurable,configurable.query_generator_model,0,2)
+    llm=ChatDeepSeek(model="deepseek-chat",
                    temperature=0,
                    max_retries=2,
-                   api_key=os.getenv("GEMINI_API_KEY"),  
-                   base_url=gemini_baseurl        
+                   api_key=os.getenv("DEEP_SEEK_KEY"),
+                   base_url=deepseek_baseurl  
                    )
     messages=[HumanMessage(content=formatted_prompt)]
     web_research_result = []
@@ -299,9 +346,8 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
     """
     configurable = Configuration.from_runnable_config(config)
     state["research_loop_count"] = state.get("research_loop_count", 0) + 1
-    reasoning_model = state.get("reasoning_model", configurable.reflection_model)
+    #reasoning_model = state.get("reasoning_model", configurable.reflection_model)
 
-    # Format the prompt
     current_date = get_current_date()
     formatted_prompt = reflection_instructions.format(
         current_date=current_date,
@@ -309,33 +355,40 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
         summaries="\n\n---\n\n".join(state["web_research_result"]),
     )
     logger.info(f"🤔summaries={"\n\n---\n\n".join(state["web_research_result"])}")
-    # init Reasoning Model
-    # llm = ChatGoogleGenerativeAI(
-    #     model=reasoning_model,
-    #     temperature=1.0,
-    #     max_retries=2,
-    #     api_key=os.getenv("GEMINI_API_KEY"),
-    # )
-    #result = llm.with_structured_output(Reflection).invoke(formatted_prompt)
- 
-    response=genai_client.models.generate_content(
-        model=reasoning_model,
-        contents=formatted_prompt,
-        config={"temperature": 1.0},
+    
+    llm=ChatDeepSeek(
+            model="deepseek-chat",
+            temperature=1,
+            max_retries=2,
+            api_key=os.getenv("DEEP_SEEK_KEY"),
+            base_url=deepseek_baseurl
     )
-    text_output=response.candidates[0].content.parts[0].text
-    clean_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_output, flags=re.DOTALL)
-    result = json.loads(clean_text)
-    logger.info(f"""🤔is_sufficient={result["is_sufficient"]},
-                knowledge_gap={result["knowledge_gap"]},
-                follow_up_queries={result["follow_up_queries"]},
-                research_loop_count={state["research_loop_count"]},
-                number_of_ran_queries={len(state["search_query"])}
+    result=llm.with_structured_output(Reflection).invoke(formatted_prompt)
+    #llm=get_llm_client(configurable,configurable.reflection_model,1)
+    # response=genai_client.models.generate_content(
+    #     model=reasoning_model,
+    #     contents=formatted_prompt,
+    #     config={"temperature": 1.0},
+    # )
+    # text_output=response.candidates[0].content.parts[0].text
+    # clean_text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text_output, flags=re.DOTALL)
+    # result = json.loads(clean_text)
+    # logger.info(f"""🤔is_sufficient={result["is_sufficient"]},
+    #             knowledge_gap={result["knowledge_gap"]},
+    #             follow_up_queries={result["follow_up_queries"]},
+    #             research_loop_count={state["research_loop_count"]},
+    #             number_of_ran_queries={len(state["search_query"]),state["search_query"]}
+    #             """)
+    logger.info(f"""🤔is_sufficient={result.is_sufficient},
+                 knowledge_gap={result.knowledge_gap},
+                 follow_up_queries={result.follow_up_queries},
+                 research_loop_count={state["research_loop_count"]},
+                 number_of_ran_queries={len(state["search_query"]),state["search_query"]}
                 """)
     return {
-        "is_sufficient": result["is_sufficient"],
-        "knowledge_gap": result["knowledge_gap"],
-        "follow_up_queries": result["follow_up_queries"],
+        "is_sufficient": result.is_sufficient,
+        "knowledge_gap": result.knowledge_gap,
+        "follow_up_queries": result.follow_up_queries,
         "research_loop_count": state["research_loop_count"],
         "number_of_ran_queries": len(state["search_query"]),
     }
@@ -400,7 +453,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
         Dictionary with state update, including running_summary key containing the formatted final summary with sources
     """
     configurable = Configuration.from_runnable_config(config)
-    reasoning_model = state.get("reasoning_model") or configurable.answer_model
+    #reasoning_model = state.get("reasoning_model") or configurable.answer_model
 
     # Format the prompt
     current_date = get_current_date()
@@ -412,32 +465,36 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     
     logger.info(f"⚡⚡⚡formatted_prompt={formatted_prompt}")
     
-    response = genai_client.models.generate_content(
-        model=reasoning_model,
-        contents=formatted_prompt,
-        config={"temperature": 0},
+    #llm=get_llm_client(configurable,configurable.answer_model,0,2)
+    llm=ChatDeepSeek(
+        model="deepseek-chat",
+        temperature=0,
+        max_retries=2,
+        api_key=os.getenv("DEEP_SEEK_KEY"),
+        base_url=deepseek_baseurl
     )
-    raw_text = response.candidates[0].content.parts[0].text
-    clean_text=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL)
-    # init Reasoning Model, default to Gemini 2.5 Flash
-    # llm = ChatGoogleGenerativeAI(
+    result=llm.invoke(formatted_prompt)
+    # response = genai_client.models.generate_content(
     #     model=reasoning_model,
-    #     temperature=0,
-    #     max_retries=2,
-    #     api_key=os.getenv("GEMINI_API_KEY"),
+    #     contents=formatted_prompt,
+    #     config={"temperature": 0},
     # )
-    # result = llm.invoke(formatted_prompt)
+    # raw_text = response.candidates[0].content.parts[0].text
+    # clean_text=re.sub(r"^```(?:json)?\s*|\s*```$", "", raw_text, flags=re.DOTALL)
 
-    # Replace the short urls with the original urls and add all used urls to the sources_gathered
+
     unique_sources = []
+
     for source in state["sources_gathered"]:
-        if source["short_url"] in clean_text:
-            clean_text = clean_text.replace(source["short_url"], source["value"])
+        if source["short_url"] in result.content:
+            result.content=result.content.replace(
+                source["short_url"], source["value"]
+            )
             unique_sources.append(source)
 
     logger.info("🚀==============================END=================================🚀")
     return {
-        "messages": [AIMessage(content=clean_text)],
+        "messages": [AIMessage(content=result.content)],
         "sources_gathered": unique_sources,
     }
 
