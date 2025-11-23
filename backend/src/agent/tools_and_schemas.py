@@ -5,6 +5,7 @@ from langchain.tools import tool
 from dotenv import load_dotenv
 from google.genai import Client
 from langchain_core.runnables import RunnableConfig
+from langchain_tavily import TavilySearch
 from agent.configuration import Configuration
 from agent.utils import resolve_urls,get_citations,insert_citation_markers
 from agent.state import (
@@ -43,8 +44,8 @@ def escape_md(value):
     return str(value).replace("|", "\\|").replace("\n", " ")
 
 
-@tool("web_search",return_direct=False)
-def web_search(query:str,config: RunnableConfig,state: WebSearchState):
+@tool("web_search_googlesearch",return_direct=False)
+def web_search_googlesearch(query:str,config: RunnableConfig,state: WebSearchState):
     """Performs Google search and returns sources and results."""
     configurable = Configuration.from_runnable_config(config)
     response=genai_client.models.generate_content(
@@ -66,6 +67,60 @@ def web_search(query:str,config: RunnableConfig,state: WebSearchState):
 
 
     return {"query": query, "modified_text": modified_text,"sources_gathered":sources_gathered}
+
+@tool("web_search",return_direct=False)
+def web_search(query:str,config:RunnableConfig,state:WebSearchState):
+    """
+    Performs web search using Tavily and returns sources and results."""
+    tavily_api_key = os.getenv("TAVILY_API_KEY")
+    if not tavily_api_key:
+        raise ValueError("TAVILY_API_KEY environment variable is not set")
+    
+    tavily_search = TavilySearch(api_key=tavily_api_key)
+    
+    # Perform search
+    search_results = tavily_search.invoke(query)
+    
+    # Extract search results and sources
+    # Debug: print the actual result type and content
+    print(f"search_results type: {type(search_results)}")
+    print(f"search_results content: {search_results}")
+
+    # Handle different response formats
+    if isinstance(search_results, str):
+       # If it's a string, treat it as the content
+       modified_text = f"### 网页搜索结果（来自工具 web_search）\n\n查询：{query}\n\n{search_results}"
+       sources_gathered = []
+    elif isinstance(search_results, list):
+       # If it's a list, process each result
+       sources_gathered = []
+       modified_text = f"### 网页搜索结果（来自工具 web_search）\n\n查询：{query}\n\n"
+    
+       for i, result in enumerate(search_results, 1):
+            if isinstance(result, dict):
+               title = result.get('title', f'结果 {i}')
+               content = result.get('content', str(result))
+               url = result.get('url', '')
+               modified_text += f"**{i}. {title}**\n\n{content}\n\n来源：{url}\n\n"
+            
+               sources_gathered.append({
+                  'label': title,
+                  'short_url': url,
+                  'value': url
+                })
+            else:
+                modified_text += f"**{i}.** {result}\n\n"
+    else:
+       # Fallback for other types
+       modified_text = f"### 网页搜索结果（来自工具 web_search）\n\n查询：{query}\n\n{str(search_results)}"
+       sources_gathered = []
+    
+    return {
+        "query": query,
+        "modified_text": modified_text,
+        "sources_gathered": sources_gathered
+    }
+    
 
 @tool("get_clinical_results",return_direct=False)
 def get_clinical_results(keywords:str):

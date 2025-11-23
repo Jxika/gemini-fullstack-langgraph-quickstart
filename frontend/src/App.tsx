@@ -16,6 +16,7 @@ export default function App() {
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const hasFinalizeEventOccurredRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+
   const thread = useStream<{
     messages: Message[];
     initial_search_query_count: number;
@@ -102,6 +103,8 @@ export default function App() {
   const handleSubmit = useCallback(
     (submittedInputValue: string, effort: string, model: string) => {
       if (!submittedInputValue.trim()) return;
+
+
       setProcessedEventsTimeline([]);
       hasFinalizeEventOccurredRef.current = false;
 
@@ -127,11 +130,11 @@ export default function App() {
       }
 
       const newMessages: Message[] = [
-        ...(thread.messages || []),
+        //...(thread.messages || []),
         {
           type: "human",
           content: submittedInputValue,
-          id: Date.now().toString(),
+          id: crypto.randomUUID(),
         },
       ];
       thread.submit({

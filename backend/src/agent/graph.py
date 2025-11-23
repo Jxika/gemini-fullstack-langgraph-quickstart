@@ -30,7 +30,11 @@ from agent.prompts import (
     web_searcher_instructions,
     reflection_instructions,
     answer_instructions,
-    web_searcher_instructions_hybrid
+    web_searcher_instructions_hybrid,
+    query_writer_instructions_deepseek,
+    web_searcher_instructions_hybrid_deepseek,
+    reflection_instructions_deepseek,
+    answer_instructions_deepseek
 )
 
 from langchain_openai import ChatOpenAI
@@ -156,7 +160,7 @@ def generate_query(state: OverallState, config: RunnableConfig) -> QueryGenerati
     if state.get("initial_search_query_count") is None:
         state["initial_search_query_count"] = configurable.number_of_initial_queries
 
-    formatted_prompt = query_writer_instructions.format(
+    formatted_prompt = query_writer_instructions_deepseek.format(
         current_date=get_current_date(),
         research_topic=get_research_topic(state["messages"]),
         number_queries=state["initial_search_query_count"],
@@ -250,7 +254,7 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
 
     configurable = Configuration.from_runnable_config(config)
 
-    formatted_prompt = web_searcher_instructions_hybrid.format(
+    formatted_prompt = web_searcher_instructions_hybrid_deepseek.format(
         current_date=get_current_date(),
         research_topic=state["search_query"],
     )
@@ -349,7 +353,7 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
     #reasoning_model = state.get("reasoning_model", configurable.reflection_model)
 
     current_date = get_current_date()
-    formatted_prompt = reflection_instructions.format(
+    formatted_prompt = reflection_instructions_deepseek.format(
         current_date=current_date,
         research_topic=get_research_topic(state["messages"]),
         summaries="\n\n---\n\n".join(state["web_research_result"]),
@@ -457,7 +461,7 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
 
     # Format the prompt
     current_date = get_current_date()
-    formatted_prompt = answer_instructions.format(
+    formatted_prompt = answer_instructions_deepseek.format(
         current_date=current_date,
         research_topic=get_research_topic(state["messages"]),
         summaries="\n---\n\n".join(state["web_research_result"]),

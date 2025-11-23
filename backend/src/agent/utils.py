@@ -29,10 +29,199 @@ def get_research_topic(messages: List[AnyMessage]) -> str:
     return research_topic
 
 '''
-   把模型返回的冗长URL生成短链接ID，用于可视化或Markdown引用
-   将搜索结果或引用中冗长的URL转为短链接
+   为Tavily搜索结果生成短链接ID，用于可视化或Markdown引用
+   将Tavily搜索结果中的URL转为短链接
 '''
-def resolve_urls(urls_to_resolve: List[Any], id: int) -> Dict[str, str]:
+def resolve_urls(search_results: List[dict], id: int) -> Dict[str, str]:
+    """
+    Create a map of Tavily search result URLs to a short url with a unique id for each URL.
+    Ensures each original URL gets a consistent shortened form while maintaining uniqueness.
+    
+    Args:
+        search_results: List of search result dictionaries from Tavily
+        id: Unique identifier for this search batch
+    
+    Returns:
+        Dictionary mapping original URLs to shortened URLs
+    """
+    prefix = f"https://tavily.search/id/"
+    resolved_map = {}
+    
+    # Extract URLs from Tavily search results
+    urls = []
+    if isinstance(search_results, list):
+        for result in search_results:
+            if isinstance(result, dict) and 'url' in result:
+                urls.append(result['url'])
+    
+    # Create a dictionary that maps each unique URL to its first occurrence index
+    for idx, url in enumerate(urls):
+        if url not in resolved_map:
+            resolved_map[url] = f"{prefix}{id}-{idx}"
+    return resolved_map
+
+'''
+   在文本中插入Markdown引用的链接
+   在回答文本中插入Markdown引用标记（如[source](short_url)）。
+   对于Tavily搜索结果，由于没有位置信息，将在文本末尾添加引用列表。
+'''
+def insert_citation_markers(text, citations_list):
+    """
+    Inserts citation markers into a text string based on start and end indices.
+    For Tavily results (which lack position info), appends citations at the end.
+
+    Args:
+        text (str): The original text string.
+        citations_list (list): A list of dictionaries, where each dictionary
+                               contains 'start_index', 'end_index', and
+                               'segments' with citation information.
+
+    Returns:
+        str: The text with citation markers inserted.
+    """
+    if not citations_list:
+        return text
+    
+    # Check if we have position information (from Google Search) or not (from Tavily)
+    has_position_info = any(
+        citation.get("start_index", 0) != 0 or citation.get("end_index", 0) != 0 
+        for citation in citations_list
+    )
+    
+    if has_position_info:
+        # Original logic for Google Search results with position info
+        # Sort citations by end_index in descending order.
+        # If end_index is the same, secondary sort by start_index descending.
+        # This ensures that insertions at the end of the string don't affect
+        # the indices of earlier parts of the string that still need to be processed.
+        sorted_citations = sorted(
+            citations_list, key=lambda c: (c["end_index"], c["start_index"]), reverse=True
+        )
+
+        modified_text = text
+        for citation_info in sorted_citations:
+            # These indices refer to positions in the *original* text,
+            # but since we iterate from the end, they remain valid for insertion
+            # relative to the parts of the string already processed.
+            end_idx = citation_info["end_index"]
+            marker_to_insert = ""
+            for segment in citation_info["segments"]:
+                marker_to_insert += f" [{segment['label']}]({segment['short_url']})"
+            # Insert the citation marker at the original end_idx position
+            modified_text = (
+                modified_text[:end_idx] + marker_to_insert + modified_text[end_idx:]
+            )
+        
+        return modified_text
+    else:
+        # New logic for Tavily results without position info
+        # Append citations at the end of the text
+        modified_text = text
+        
+        # Add citation section if we have citations
+        if citations_list:
+            modified_text += "\n\n## 参考来源\n"
+            
+            for idx, citation in enumerate(citations_list, 1):
+                for segment in citation["segments"]:
+                    title = segment.get('label', f'来源 {idx}')
+                    url = segment.get('short_url', segment.get('value', ''))
+                    modified_text += f"\n{idx}. [{title}]({url})"
+        
+        return modified_text
+
+'''
+    从Tavily搜索结果中提取引用信息
+    作用：从Tavily搜索结果中提取引用元数据，用于生成引用标记。
+    👇主要逻辑：
+      1.从Tavily搜索结果列表中提取每个结果的信息。
+      2.提取：
+          ·title：网页标题
+          ·url：网页链接
+          ·content：网页内容摘要
+      3.使用 resolved_urls_map 将长URL映射为短链接。
+      4.构建一个 citation 字典：
+         {
+            "start_index": 0,  # Tavily不提供位置信息，设为0
+            "end_index": 0,    # Tavily不提供位置信息，设为0
+            "segments": [
+               {"label": "网页标题", "short_url": "https://tavily.search/id/1-0", "value": "原始URL"}
+            ]
+        }
+      5.返回一个 citation 列表，用于传给 insert_citation_markers()。
+'''
+def get_citations(search_results, resolved_urls_map):
+    """
+    Extracts and formats citation information from Tavily search results.
+
+    This function processes Tavily search results to construct a list of 
+    citation objects. Each citation object includes the title, URL, and 
+    formatted markdown links to the web sources.
+
+    Args:
+        search_results: List of search result dictionaries from Tavily
+        resolved_urls_map: Dictionary mapping original URLs to shortened URLs
+
+    Returns:
+        list: A list of dictionaries, where each dictionary represents a citation
+              and has the following keys:
+              - "start_index" (int): Set to 0 since Tavily doesn't provide position info
+              - "end_index" (int): Set to 0 since Tavily doesn't provide position info
+              - "segments" (list[dict]): List of citation segments with label, short_url, and value
+              Returns an empty list if no valid search results are found.
+    """
+    citations = []
+
+    if not search_results:
+        return citations
+
+    # Handle different response formats from Tavily
+    if isinstance(search_results, str):
+        # If it's a string, we can't extract structured citations
+        logger.info("get_citations: search_results is a string, cannot extract structured citations")
+        return citations
+    
+    if not isinstance(search_results, list):
+        logger.info(f"get_citations: unexpected search_results type: {type(search_results)}")
+        return citations
+
+    for idx, result in enumerate(search_results):
+        if not isinstance(result, dict):
+            continue
+            
+        # Extract essential information
+        title = result.get('title', f'来源 {idx + 1}')
+        url = result.get('url', '')
+        content = result.get('content', '')
+        
+        if not url:
+            continue
+            
+        # Create citation entry
+        citation = {
+            "start_index": 0,  # Tavily doesn't provide position information
+            "end_index": 0,    # Tavily doesn't provide position information
+            "segments": []
+        }
+        
+        # Get the shortened URL from the resolved map
+        short_url = resolved_urls_map.get(url, url)
+        
+        # Add segment with title and URL
+        citation["segments"].append({
+            "label": title,
+            "short_url": short_url,
+            "value": url
+        })
+        
+        citations.append(citation)
+    
+    return citations
+
+
+##########################################以下是googlesearch用的方法#############################################
+
+def resolve_urls_googlesearch(urls_to_resolve: List[Any], id: int) -> Dict[str, str]:
     """
     Create a map of the vertex ai search urls (very long) to a short url with a unique id for each url.
     Ensures each original URL gets a consistent shortened form while maintaining uniqueness.
@@ -45,14 +234,11 @@ def resolve_urls(urls_to_resolve: List[Any], id: int) -> Dict[str, str]:
     for idx, url in enumerate(urls):
         if url not in resolved_map:
             resolved_map[url] = f"{prefix}{id}-{idx}"
+
     return resolved_map
 
-'''
-   在文本中插入Markdown引用的链接
-   在回答文本中插入Markdown引用标记（如[source](short_url)）。
-     ·先按end_index 从后往前插入，避免影响尚未插入部分的索引。
-'''
-def insert_citation_markers(text, citations_list):
+
+def insert_citation_markers_googlesearch(text, citations_list):
     """
     Inserts citation markers into a text string based on start and end indices.
 
@@ -90,28 +276,8 @@ def insert_citation_markers(text, citations_list):
 
     return modified_text
 
-'''
-    从模型响应的“grounding_metadata”(即引用元数据)
-    作用：从Gemini或 Vertex AI Search 的响应中提取引用元数据。
-    这些引用信息通常在模型输出的 grounding_metadata中。
-    👇主要逻辑：
-      1.从response.candidates[0].grounding_metadata.grounding_supports 中获取每个引用块。
-      2.提取：
-          ·start_index：引用段在原文中的起始位置
-          ·end_index：引用结束位置
-          ·grounding_chunk_indices：指向模型检索到的网页片段
-      3.查找每个网页片段的真实 URL，并用 resolved_urls_map 映射成短链接。
-      4.构建一个 citation 字典：
-         {
-            "start_index": 120,
-            "end_index": 180,
-            "segments": [
-               {"label": "BBC News", "short_url": "https://vertexaisearch.cloud.google.com/id/5-3"}
-            ]
-        }
-      5.返回一个 citation 列表，用于传给 insert_citation_markers()。
-'''
-def get_citations(response, resolved_urls_map):
+
+def get_citations_googlesearch(response, resolved_urls_map):
     """
     Extracts and formats citation information from a Gemini model's response.
 
