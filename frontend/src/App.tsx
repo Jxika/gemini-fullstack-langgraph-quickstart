@@ -28,12 +28,12 @@ export default function App() {
       : "http://localhost:8123",
     assistantId: "agent",
     messagesKey: "messages",
-    onUpdateEvent: (event: any) => {
+    onUpdateEvent: (event: any) => {    //前端通过useStream自动接收这些事件，并调用onUpdateEvent,实时更新timeline动画
       let processedEvent: ProcessedEvent | null = null;
       if (event.generate_query) {
         processedEvent = {
           title: "Generating Search Queries",
-          data: event.generate_query?.search_query?.join(", ") || "",
+          data: event.generate_query?.generated_query?.join(", ") || "",
         };
       } else if (event.web_research) {
         const sources = event.web_research.sources_gathered || [];
@@ -103,7 +103,6 @@ export default function App() {
   const handleSubmit = useCallback(
     (submittedInputValue: string, effort: string, model: string) => {
       if (!submittedInputValue.trim()) return;
-
 
       setProcessedEventsTimeline([]);
       hasFinalizeEventOccurredRef.current = false;

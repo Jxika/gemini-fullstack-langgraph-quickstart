@@ -33,48 +33,6 @@ query_writer_instructions_deepseek="""你的目标是生成复杂且多样化的
   上下文：{research_topic}"""
 
 
-query_writer_instructions = """Your goal is to generate sophisticated and diverse web search queries. These queries are intended for an advanced automated web research tool capable of analyzing complex results, following links, and synthesizing information.
-
-Instructions:
-- Always prefer a single search query, only add another query if the original question requests multiple aspects or elements and one query is not enough.
-- Each query should focus on one specific aspect of the original question.
-- Don't produce more than {number_queries} queries.
-- Queries should be diverse, if the topic is broad, generate more than 1 query.
-- Don't generate multiple similar queries, 1 is enough.
-- Query should ensure that the most current information is gathered. The current date is {current_date}.
-
-Format: 
-- Format your response as a JSON object with ALL two of these exact keys:
-   - "rationale": Brief explanation of why these queries are relevant
-   - "query": A list of search queries
-
-Example:
-
-Topic: What revenue grew more last year apple stock or the number of people buying an iphone
-```json
-{{
-    "rationale": "To answer this comparative growth question accurately, we need specific data points on Apple's stock performance and iPhone sales metrics. These queries target the precise financial information needed: company revenue trends, product-specific unit sales figures, and stock price movement over the same fiscal period for direct comparison.",
-    "query": ["Apple total revenue growth fiscal year 2024", "iPhone unit sales growth fiscal year 2024", "Apple stock price growth fiscal year 2024"],
-}}
-```
-
-Context: {research_topic}"""
-
-
-web_searcher_instructions = """Conduct targeted Google Searches to gather the most recent, credible information on "{research_topic}" and synthesize it into a verifiable text artifact.
-
-Instructions:
-- Query should ensure that the most current information is gathered. The current date is {current_date}.
-- Conduct multiple, diverse searches to gather comprehensive information.
-- Consolidate key findings while meticulously tracking the source(s) for each specific piece of information.
-- The output should be a well-written summary or report based on your search findings. 
-- Only include the information found in the search results, don't make up any information.
-
-Research Topic:
-{research_topic}
-"""
-
-
 web_searcher_instructions_hybrid_deepseek="""
 执行针对性的谷歌搜索，若主题涉及临床试验或患者/试验相关详细信息，也可调用本地工具获取临床试验数据。将{current_date}设为当前所用日期。
 
@@ -109,8 +67,8 @@ reflection_instructions_deepseek="""
     你是一个专家研究助理，负责分析有关{research_topic}的摘要。
 
     指令:
-      -识别知识空白或需要更深入探讨的领域  ，并生成后续查询。（可为1条或多条）。
-      -如果提供的摘要已足以回答用户的问题，则不要生成后续查询。
+      -识别知识空白或需要更深入探讨的领域,并生成后续查询。（可为1条或多条）。
+      -如果提供的摘要已足以回答用户的问题,则不要生成后续查询。
       -如果存在知识空白，生成一个能帮助扩展理解的后续查询。
       -关注未充分涵盖的技术细节、实现细节或新兴趋势。
     
@@ -138,38 +96,6 @@ reflection_instructions_deepseek="""
     {summaries}
 """
 
-reflection_instructions = """You are an expert research assistant analyzing summaries about "{research_topic}".
-
-Instructions:
-- Identify knowledge gaps or areas that need deeper exploration and generate a follow-up query. (1 or multiple).
-- If provided summaries are sufficient to answer the user's question, don't generate a follow-up query.
-- If there is a knowledge gap, generate a follow-up query that would help expand your understanding.
-- Focus on technical details, implementation specifics, or emerging trends that weren't fully covered.
-
-Requirements:
-- Ensure the follow-up query is self-contained and includes necessary context for web search.
-
-Output Format:
-- Format your response as a JSON object with these exact keys:
-   - "is_sufficient": true or false
-   - "knowledge_gap": Describe what information is missing or needs clarification
-   - "follow_up_queries": Write a specific question to address this gap
-
-Example:
-```json
-{{
-    "is_sufficient": true, // or false
-    "knowledge_gap": "The summary lacks information about performance metrics and benchmarks", // "" if is_sufficient is true
-    "follow_up_queries": ["What are typical performance benchmarks and metrics used to evaluate [specific technology]?"] // [] if is_sufficient is true
-}}
-```
-
-Reflect carefully on the Summaries to identify knowledge gaps and produce a follow-up query. Then, produce your output following this JSON format:
-
-Summaries:
-{summaries}
-"""
-
 
 answer_instructions_deepseek="""
     基于提供的摘要内容，为用户的问题生成高质量回答。
@@ -180,7 +106,7 @@ answer_instructions_deepseek="""
       -你可以访问前面步骤中收集的所有信息。
       -你可以访问用户提出的问题。
       -基于提供的摘要内容以及用户的问题，生成高质量的回答。
-      -在回答中正确引用摘要的来源，并使用 Markdown 格式。（例如：[apnews](https://tavily.search/id/1-0)）。这是必须做到的
+      -在回答中正确引用摘要的来源，并使用 Markdown 格式。（例如：[apnews](https://tavily.search/id/1-0)）,这是必须做到的。
       
     引用格式说明：
       -对于网页搜索结果：使用 [来源标题](链接) 格式引用
@@ -206,49 +132,3 @@ answer_instructions_deepseek="""
 """
 
 
-
-
-'''
-根据所提供的摘要，为用户的问题生成一个高质量的回答。
-指令：
-  当前日期为 {current_date}。
-  你是一个多步骤研究流程中的最后一步，但不要在回答中提及这一点。
-  你可以访问前面步骤中收集的所有信息。
-  你可以访问用户提出的问题。
-  基于所提供的摘要和用户的问题，生成一个高质量、准确且全面的回答。
-  在回答中正确引用摘要中的信息来源，并使用 Markdown 格式（例如：[apnews](https://vertexaisearch.cloud.google.com/id/1-0)）。
-  ⚠️ 这是必须做到的。
-
-  用户上下文：
-    {research_topic}
-  摘要（Summaries）：
-    {summaries}
-'''
-answer_instructions = """Generate a high-quality answer to the user's question based on the provided summaries.
-
-Instructions:
-- The current date is {current_date}.
-- You are the final step of a multi-step research process, don't mention that you are the final step. 
-- You have access to all the information gathered from the previous steps.
-- You have access to the user's question.
-- Generate a high-quality answer to the user's question based on the provided summaries and the user's question.
-- Include the sources you used from the Summaries in the answer correctly, use markdown format (e.g. [apnews](https://vertexaisearch.cloud.google.com/id/1-0)). THIS IS A MUST.
-
-CRITICAL REQUIREMENTS:
-- Summaries include two types of data:
-  (1) Web search results
-  (2) Local structured data (e.g., tables, pipelines, or formatted clinical trial lists produced by internal tools)
-- When using LOCAL structured data, you MUST preserve the original structure and content as completely as possible.
-  * Do NOT drop rows, columns, trial IDs, drug names, phases, or statuses.
-  * Do NOT compress or shorten structured lists or tables.
-  * You may reformat the layout for readability, but the information must remain complete and faithful to the source.
-  * **When including local structured data in your answer, you MUST format it as a Markdown table**, so it can be properly rendered in the front-end.
-- Web search results may be summarized if needed, but local tool-generated data must remain detailed and intact.
-- Do NOT invent citations.
-
-
-User Context:
-- {research_topic}
-
-Summaries:
-{summaries}"""

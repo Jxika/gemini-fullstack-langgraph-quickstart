@@ -12,6 +12,7 @@ import operator
 
 class OverallState(TypedDict):
     messages: Annotated[list, add_messages]
+    generated_query:list[str]
     search_query: Annotated[list, operator.add]
     web_research_result: Annotated[list, operator.add]
     sources_gathered: Annotated[list, operator.add]
