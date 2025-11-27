@@ -119,8 +119,8 @@ export default function App() {
           max_research_loops = 1;
           break;
         case "medium":
-          initial_search_query_count = 3;
-          max_research_loops = 3;
+          initial_search_query_count = 2;
+          max_research_loops = 2;
           break;
         case "high":
           initial_search_query_count = 5;

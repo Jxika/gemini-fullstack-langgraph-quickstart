@@ -9,14 +9,14 @@ logger=get_logger(__name__)
    输入一般是聊天记录（LangChain格式：HumanMessage、AIMessage）
    如果是多轮对话，就是把每条消息前加上"User:"或"Assistant："，拼接成完整上下文。
 """
-def get_research_topic(messages: List[AnyMessage]) -> str:
+def get_research_topic(messages: List[AnyMessage],flag:str) -> str:
     """
     Get the research topic from the messages.
     """
     # check if request has a history and combine the messages into a single string
     if len(messages) == 1: 
         research_topic = messages[-1].content
-        logger.info(f"💬len(messages)=1,research_topic={research_topic}")
+        logger.info(f"💬{flag}步骤中|len(messages)=1,research_topic={research_topic}")
     else:
         research_topic = ""
         for message in messages:
@@ -24,7 +24,7 @@ def get_research_topic(messages: List[AnyMessage]) -> str:
                 research_topic += f"User: {message.content}\n"
             elif isinstance(message, AIMessage):
                 research_topic += f"Assistant: {message.content}\n"
-        logger.info(f"💬research_topic={research_topic}")
+        logger.info(f"💬{flag}步骤中|research_topic={research_topic}")
     
     return research_topic
 

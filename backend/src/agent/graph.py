@@ -25,7 +25,6 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from agent.logger import get_logger
 from agent.prompts import (
     get_current_date,
-    web_searcher_instructions,
     query_writer_instructions_deepseek,
     web_searcher_instructions_hybrid_deepseek,
     reflection_instructions_deepseek,
@@ -76,7 +75,6 @@ def parse_tools(text, start_flag, end_flag):
     return tools
 
 def get_tools(response):
-    logger.info(f"get_tools|llm返回:{extract_answer(response['content'])}")
     if response['tool_calls']:
         tools = response['tool_calls']
     else:
@@ -101,9 +99,7 @@ def get_tools(response):
             print("----------<```json>------------")
             tools = parse_tools(content, '```json', '```')      
         else:
-            tools = [] 
-    logger.info(f"get_tools|llm返回工具:{tools}")  
-    logger.info(f"----------------------------")  
+            tools = []  
     return tools
 
 def generate_query(state: OverallState, config: RunnableConfig) -> OverallState:
@@ -113,7 +109,7 @@ def generate_query(state: OverallState, config: RunnableConfig) -> OverallState:
 
     formatted_prompt = query_writer_instructions_deepseek.format(
         current_date=get_current_date(),
-        research_topic=get_research_topic(state["messages"]),
+        research_topic=get_research_topic(state["messages"],"generate_query"),
         number_queries=state["initial_search_query_count"],
     )
     llm=ChatDeepSeek(model="deepseek-chat",
@@ -140,7 +136,7 @@ def continue_to_web_research(state: OverallState):
 def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
 
     configurable = Configuration.from_runnable_config(config)
-
+    id=state["id"]
     formatted_prompt = web_searcher_instructions_hybrid_deepseek.format(
         current_date=get_current_date(),
         research_topic=state["search_query"],
@@ -156,11 +152,17 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
 
     tools = {"web_search": web_search, "get_clinical_results": get_clinical_results}
 
-    while True:
+    max_loops=2
+    loop_count=0
+    while loop_count<max_loops:
+            loop_count+=1
+
             response=llm.bind_tools([web_search, get_clinical_results]).invoke(messages)
             response = response.model_dump_json(indent=4, exclude_none=True)
             response = json.loads(response)
+            logger.info(f"任务{id}|get_tools前|llm返回:{extract_answer(response['content'])}")
             extract_tools=get_tools(response)
+            logger.info(f"任务{id}|get_tools提取|llm返回工具:{tools}") 
             if extract_tools:
                 for tool in extract_tools:
                     if isinstance(tool, str):
@@ -179,11 +181,12 @@ def web_research(state: WebSearchState, config: RunnableConfig) -> OverallState:
                     except Exception as e:
                         messages += [HumanMessage(content=f"{tool}工具调用格式错误:{e}")]
                         break
-                    logger.info(f"web_research|调用工具{tool_name},参数{tool_args}")
+                    logger.info(f"任务{id}|调用工具{tool_name},参数{tool_args}")
+                    logger.info(f"***************")
                     tool_result = tools[tool_name].invoke(tool_args)
                 
                     web_research_result.append(tool_result)
-                    messages += [HumanMessage(content=f"tool_name:{tool_name},tool_args:{tool_args}\ntool_result:{tool_result}")]
+                    messages += [HumanMessage(content=f"tool_name:{tool_name},tool_args:{tool_args}\ntool_result:{web_research_result}")]
             else:
                 break
     
@@ -222,11 +225,10 @@ def reflection(state: OverallState, config: RunnableConfig) -> ReflectionState:
     current_date = get_current_date()
     formatted_prompt = reflection_instructions_deepseek.format(
         current_date=current_date,
-        research_topic=get_research_topic(state["messages"]),
+        research_topic=get_research_topic(state["messages"],"reflection"),
         summaries="\n\n---\n\n".join(state["web_research_result"]),
     )
-    logger.info(f"🤔summaries={"\n\n---\n\n".join(state["web_research_result"])}")
-    
+     
     llm=ChatDeepSeek(
             model="deepseek-chat",
             temperature=1,
@@ -288,12 +290,10 @@ def finalize_answer(state: OverallState, config: RunnableConfig):
     current_date = get_current_date()
     formatted_prompt = answer_instructions_deepseek.format(
         current_date=current_date,
-        research_topic=get_research_topic(state["messages"]),
+        research_topic=get_research_topic(state["messages"],"finalize_answer"),
         summaries="\n---\n\n".join(state["web_research_result"]),
     )
-    
-    logger.info(f"⚡⚡⚡formatted_prompt={formatted_prompt}")
-    
+        
     llm=ChatDeepSeek(
         model="deepseek-chat",
         temperature=0,
